@@ -9,23 +9,23 @@ const Footer = () => {
           <div className="md:col-span-1">
             <Link to="/" className="flex items-center gap-2 mb-2">
               <div className="w-5 h-5 border-2 border-foreground rounded-sm flex items-center justify-center">
-                <span className="text-[10px] font-mono">IP</span>
+                <span className="text-[10px] font-mono">У</span>
               </div>
-              <span className="font-serif">InboxPilot.</span>
+              <span className="font-serif">Утриш ГИС.</span>
             </Link>
             <p className="text-xs font-mono text-muted-foreground">
-              АВТОМАТИЧЕСКИЙ EMAIL
+              ГЕОПОРТАЛ ЗАПОВЕДНИКА
               <br />
-              АССИСТЕНТ V2.0
+              «УТРИШ» v1.0
             </p>
-            <p className="text-xs font-mono text-muted-foreground mt-4">ВСЕ СИСТЕМЫ РАБОТАЮТ</p>
+            <p className="text-xs font-mono text-muted-foreground mt-4">СИСТЕМА МОНИТОРИНГА</p>
           </div>
 
           {/* Directory */}
           <div>
-            <h4 className="text-xs font-mono text-muted-foreground mb-4">НАВИГАЦИЯ</h4>
+            <h4 className="text-xs font-mono text-muted-foreground mb-4">РАЗДЕЛЫ</h4>
             <ul className="space-y-2">
-              {["Обзор продукта", "Тарифы", "Обновления", "Блог"].map((link) => (
+              {["Карта", "Слои", "Дашборд", "Данные"].map((link) => (
                 <li key={link}>
                   <a href="#" className="text-sm hover:text-primary transition-colors">
                     {link}
@@ -35,11 +35,11 @@ const Footer = () => {
             </ul>
           </div>
 
-          {/* Legal */}
+          {/* Data */}
           <div>
-            <h4 className="text-xs font-mono text-muted-foreground mb-4">ДОКУМЕНТЫ</h4>
+            <h4 className="text-xs font-mono text-muted-foreground mb-4">ФОРМАТЫ ДАННЫХ</h4>
             <ul className="space-y-2">
-              {["Политика конфиденциальности", "Условия использования", "Безопасность", "GDPR"].map((link) => (
+              {["GeoJSON (ArcGIS)", "CSV таблицы", "ZIP / GDB", "OpenStreetMap"].map((link) => (
                 <li key={link}>
                   <a href="#" className="text-sm hover:text-primary transition-colors">
                     {link}
@@ -49,24 +49,25 @@ const Footer = () => {
             </ul>
           </div>
 
-          {/* Protocols */}
+          {/* Status */}
           <div className="md:col-span-2">
-            <h4 className="text-xs font-mono text-muted-foreground mb-4">СТАТУС</h4>
+            <h4 className="text-xs font-mono text-muted-foreground mb-4">СТАТУС СИСТЕМЫ</h4>
             <div className="bg-secondary/50 rounded-xl p-4 font-mono text-xs">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-muted-foreground">07:44:30 UTC</span>
+                <span className="text-muted-foreground">Заповедник «Утриш»</span>
               </div>
               <div className="space-y-1">
-                <p className="text-primary">US-WEST-2 [АКТИВЕН]</p>
-                <p className="text-muted-foreground">Все системы работают штатно</p>
+                <p className="text-primary">КАРТА [АКТИВНА]</p>
+                <p className="text-muted-foreground">Слои загружаются из GeoJSON</p>
+                <p className="text-muted-foreground">Дашборд работает штатно</p>
               </div>
             </div>
           </div>
         </div>
 
         <div className="flex flex-col md:flex-row items-center justify-between mt-12 pt-8 border-t border-border">
-          <p className="text-xs text-muted-foreground">2025 INBOXPILOT AI INC.</p>
-          <p className="text-xs text-muted-foreground">РАЗРАБОТАНО В КАЛИФОРНИИ, СОБРАНО В ОБЛАКЕ.</p>
+          <p className="text-xs text-muted-foreground">2025 ГЕОПОРТАЛ ЗАПОВЕДНИКА «УТРИШ»</p>
+          <p className="text-xs text-muted-foreground">КРАСНОДАРСКИЙ КРАЙ, РОССИЯ</p>
         </div>
       </div>
     </footer>
