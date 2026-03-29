@@ -1,7 +1,12 @@
 import { useEffect, useRef } from "react";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
 import { GeoLayer, SelectedFeature } from "@/types/geo";
+
+declare global {
+  interface Window {
+     
+    ymaps: Record<string, unknown>;
+  }
+}
 
 interface MapViewProps {
   layers: GeoLayer[];
@@ -9,115 +14,162 @@ interface MapViewProps {
   onFeatureSelect: (feature: SelectedFeature | null) => void;
 }
 
-const getColorByValue = (value: number, min: number, max: number): string => {
-  const ratio = max === min ? 0.5 : (value - min) / (max - min);
-  if (ratio < 0.25) return "#27ae60";
-  if (ratio < 0.5) return "#f1c40f";
-  if (ratio < 0.75) return "#e67e22";
-  return "#e74c3c";
-};
+const YMAP_API_KEY = import.meta.env.VITE_YANDEX_MAPS_KEY || "";
 
-const MapView = ({ layers, selectedFeature, onFeatureSelect }: MapViewProps) => {
-  const mapRef = useRef<L.Map | null>(null);
+const COLOR_STOPS = [
+  { max: 2.5, color: "#27ae60" },
+  { max: 5.0, color: "#f1c40f" },
+  { max: 7.5, color: "#e67e22" },
+  { max: Infinity, color: "#e74c3c" },
+];
+
+function getColor(value: number): string {
+  return COLOR_STOPS.find((s) => value <= s.max)?.color ?? "#e74c3c";
+}
+
+function getValueRange(features: GeoJSON.Feature[], field: string): [number, number] {
+  const vals = features
+    .map((f) => (f.properties as Record<string, unknown>)?.[field])
+    .filter((v): v is number => typeof v === "number");
+  if (!vals.length) return [0, 10];
+  return [Math.min(...vals), Math.max(...vals)];
+}
+
+let scriptLoaded = false;
+
+function loadYMaps(apiKey: string): Promise<void> {
+  return new Promise((resolve) => {
+    if (window.ymaps) { resolve(); return; }
+    if (scriptLoaded) {
+      const wait = () => (window.ymaps ? resolve() : setTimeout(wait, 100));
+      wait(); return;
+    }
+    scriptLoaded = true;
+    const src = apiKey
+      ? `https://api-maps.yandex.ru/2.1/?lang=ru_RU&apikey=${apiKey}`
+      : `https://api-maps.yandex.ru/2.1/?lang=ru_RU`;
+    const s = document.createElement("script");
+    s.src = src;
+    s.onload = () => window.ymaps.ready(resolve);
+    document.head.appendChild(s);
+  });
+}
+
+function buildBalloon(props: Record<string, unknown>): string {
+  const rows = Object.entries(props)
+    .map(([k, v]) => `<tr><td style="padding:2px 6px;color:#666;font-size:11px">${k}</td><td style="padding:2px 6px;font-size:11px"><b>${v}</b></td></tr>`)
+    .join("");
+  return `<table style="border-collapse:collapse">${rows}</table>`;
+}
+
+const MapView = ({ layers, onFeatureSelect, selectedFeature }: MapViewProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const layerGroupsRef = useRef<Record<string, L.Layer>>({});
+  const mapRef = useRef<Record<string, unknown> | null>(null);
+  const geoObjectsRef = useRef<Record<string, Record<string, unknown>>>({});
 
-  // Инициализация карты
   useEffect(() => {
-    if (!containerRef.current || mapRef.current) return;
-
-    const map = L.map(containerRef.current, {
-      center: [44.76, 37.13],
-      zoom: 12,
-      zoomControl: false,
+    loadYMaps(YMAP_API_KEY).then(() => {
+      if (!containerRef.current || mapRef.current) return;
+      mapRef.current = new window.ymaps.Map(containerRef.current, {
+        center: [44.77, 37.13],
+        zoom: 12,
+        controls: ["zoomControl", "fullscreenControl"],
+      });
     });
-
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: "© OpenStreetMap contributors",
-      maxZoom: 19,
-    }).addTo(map);
-
-    L.control.zoom({ position: "topright" }).addTo(map);
-
-    mapRef.current = map;
-
     return () => {
-      map.remove();
-      mapRef.current = null;
+      if (mapRef.current) {
+        mapRef.current.destroy();
+        mapRef.current = null;
+        scriptLoaded = false;
+      }
     };
   }, []);
 
-  // Обновление слоёв
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    // Удалить старые слои которые больше не в списке
-    Object.keys(layerGroupsRef.current).forEach((id) => {
+    // Удалить исчезнувшие слои
+    Object.keys(geoObjectsRef.current).forEach((id) => {
       if (!layers.find((l) => l.id === id)) {
-        map.removeLayer(layerGroupsRef.current[id]);
-        delete layerGroupsRef.current[id];
+        map.geoObjects.remove(geoObjectsRef.current[id]);
+        delete geoObjectsRef.current[id];
       }
     });
 
     layers.forEach((layer) => {
+      if (geoObjectsRef.current[layer.id]) {
+        map.geoObjects.remove(geoObjectsRef.current[layer.id]);
+        delete geoObjectsRef.current[layer.id];
+      }
       if (!layer.data || layer.type !== "geojson") return;
 
-      // Удалить и пересоздать если слой уже был
-      if (layerGroupsRef.current[layer.id]) {
-        map.removeLayer(layerGroupsRef.current[layer.id]);
-      }
+      const fc = layer.data as GeoJSON.FeatureCollection;
+      const features = fc.features || [];
+      const collection = new window.ymaps.GeoObjectCollection();
 
-      // Считаем мин/макс для value field
-      let min = Infinity;
-      let max = -Infinity;
-      if (layer.valueField) {
-        const fc = layer.data as GeoJSON.FeatureCollection;
-        (fc.features || []).forEach((f) => {
-          const v = f.properties?.[layer.valueField!];
-          if (typeof v === "number") {
-            if (v < min) min = v;
-            if (v > max) max = v;
-          }
-        });
-      }
+      features.forEach((feature: GeoJSON.Feature) => {
+        const geom = feature.geometry;
+        const props = (feature.properties || {}) as Record<string, unknown>;
+        if (!geom) return;
 
-      const geoLayer = L.geoJSON(layer.data as GeoJSON.GeoJsonObject, {
-        style: (feature) => {
-          let fillColor = layer.color;
-          if (layer.valueField && feature?.properties?.[layer.valueField] !== undefined) {
-            fillColor = getColorByValue(feature.properties[layer.valueField], min, max);
-          }
-          return {
-            fillColor,
-            fillOpacity: layer.opacity * 0.6,
-            color: layer.color,
-            weight: 2,
-            opacity: layer.opacity,
-          };
-        },
-        onEachFeature: (feature, leafletLayer) => {
-          leafletLayer.on("click", () => {
-            onFeatureSelect({
-              layerId: layer.id,
-              layerName: layer.name,
-              properties: feature.properties || {},
-            });
+        let fillColor = layer.color.replace("#", "");
+        if (layer.valueField && props[layer.valueField] !== undefined) {
+          fillColor = getColor(props[layer.valueField] as number).replace("#", "");
+        }
+
+        const opacityHex = Math.round(layer.opacity * 200)
+          .toString(16)
+          .padStart(2, "0");
+
+        let obj: Record<string, unknown> | null = null;
+
+        if (geom.type === "Polygon") {
+          const coords = (geom as GeoJSON.Polygon).coordinates[0].map(
+            ([lng, lat]) => [lat, lng]
+          );
+          obj = new window.ymaps.Polygon([coords], {
+            hintContent: (props.name as string) || (props.zone as string) || "Объект",
+            balloonContent: buildBalloon(props),
+          }, {
+            fillColor: fillColor + opacityHex,
+            strokeColor: fillColor,
+            strokeWidth: 2,
           });
-          leafletLayer.on("mouseover", (e) => {
-            (e.target as L.Path).setStyle({ weight: 3, fillOpacity: layer.opacity * 0.9 });
+        } else if (geom.type === "Point") {
+          const [lng, lat] = (geom as GeoJSON.Point).coordinates;
+          obj = new window.ymaps.Placemark([lat, lng], {
+            hintContent: (props.name as string) || "Точка",
+            balloonContent: buildBalloon(props),
+          }, {
+            preset: "islands#circleIcon",
+            iconColor: "#" + fillColor,
           });
-          leafletLayer.on("mouseout", (e) => {
-            geoLayer.resetStyle(e.target as L.Path);
+        } else if (geom.type === "LineString") {
+          const coords = (geom as GeoJSON.LineString).coordinates.map(
+            ([lng, lat]) => [lat, lng]
+          );
+          obj = new window.ymaps.Polyline(coords, {
+            hintContent: (props.name as string) || "Линия",
+            balloonContent: buildBalloon(props),
+          }, {
+            strokeColor: "#" + fillColor,
+            strokeWidth: 3,
           });
-        },
+        }
+
+        if (obj) {
+          obj.events.add("click", () => {
+            onFeatureSelect({ layerId: layer.id, layerName: layer.name, properties: props });
+          });
+          collection.add(obj);
+        }
       });
 
       if (layer.visible) {
-        geoLayer.addTo(map);
+        map.geoObjects.add(collection);
       }
-
-      layerGroupsRef.current[layer.id] = geoLayer;
+      geoObjectsRef.current[layer.id] = collection;
     });
   }, [layers, onFeatureSelect]);
 
@@ -125,14 +177,14 @@ const MapView = ({ layers, selectedFeature, onFeatureSelect }: MapViewProps) => 
     <div className="relative w-full h-full">
       <div ref={containerRef} className="w-full h-full" />
 
-      {/* Legend overlay */}
-      <div className="absolute bottom-4 left-4 bg-card/90 backdrop-blur border border-border rounded-xl p-3 text-xs font-mono space-y-1.5 z-[1000]">
-        <p className="text-muted-foreground mb-1">ЛЕГЕНДА</p>
+      {/* Легенда */}
+      <div className="absolute bottom-4 left-4 bg-card/90 backdrop-blur border border-border rounded-xl p-3 text-xs font-mono space-y-1.5 z-10 pointer-events-none">
+        <p className="text-muted-foreground mb-1">ЛЕГЕНДА — потеря (га)</p>
         {[
-          { color: "#e74c3c", label: "Критическая потеря" },
-          { color: "#e67e22", label: "Высокая потеря" },
-          { color: "#f1c40f", label: "Средняя потеря" },
-          { color: "#27ae60", label: "Низкая / норма" },
+          { color: "#e74c3c", label: "> 7.5 га — критично" },
+          { color: "#e67e22", label: "5–7.5 га — высокая" },
+          { color: "#f1c40f", label: "2.5–5 га — средняя" },
+          { color: "#27ae60", label: "< 2.5 га — норма" },
         ].map((item) => (
           <div key={item.label} className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-sm flex-shrink-0" style={{ backgroundColor: item.color }} />
@@ -141,10 +193,15 @@ const MapView = ({ layers, selectedFeature, onFeatureSelect }: MapViewProps) => 
         ))}
       </div>
 
-      {/* Click hint */}
       {!selectedFeature && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-card/90 backdrop-blur border border-border rounded-full px-4 py-1.5 text-[11px] font-mono text-muted-foreground z-[1000]">
-          Кликните на объект для просмотра данных
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-card/90 backdrop-blur border border-border rounded-full px-4 py-1.5 text-[11px] font-mono text-muted-foreground z-10 pointer-events-none whitespace-nowrap">
+          Кликните на зону для просмотра данных
+        </div>
+      )}
+
+      {!YMAP_API_KEY && (
+        <div className="absolute top-12 left-1/2 -translate-x-1/2 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2 text-[11px] font-mono text-amber-700 z-10 pointer-events-none text-center">
+          ⚠️ Добавьте VITE_YANDEX_MAPS_KEY в переменные окружения
         </div>
       )}
     </div>
